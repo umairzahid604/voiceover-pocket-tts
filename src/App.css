@@ -388,6 +388,53 @@ select:focus,
   padding: 18px;
 }
 
+.progress-meter {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(23, 20, 16, 0.08);
+}
+
+.progress-meter.is-compact {
+  padding: 14px;
+}
+
+.progress-head,
+.progress-stats {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.progress-head strong,
+.progress-stats {
+  color: var(--text);
+}
+
+.progress-stats {
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.progress-track {
+  position: relative;
+  overflow: hidden;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(23, 20, 16, 0.08);
+}
+
+.progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #d79b66 0%, #be6f3e 100%);
+  transition: width 220ms linear;
+}
+
 .plan-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
@@ -539,6 +586,12 @@ audio {
   }
 
   .detail-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .progress-head,
+  .progress-stats {
     flex-direction: column;
     align-items: flex-start;
   }

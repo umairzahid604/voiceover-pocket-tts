@@ -6,9 +6,14 @@ export type PlanItem = {
   seconds: number
 }
 
-const WORDS_PER_MINUTE = 145
+const WORDS_PER_MINUTE = 130
 const IDEAL_SEGMENT_WORDS = 34
 const MAX_SEGMENT_WORDS = 52
+const GENERATION_SPEED_RATIO = 3
+const GENERATION_BUFFER_RATIO = 1.25
+const GENERATION_BUFFER_SECONDS = 20
+const MIN_GENERATION_SECONDS = 12
+const MAX_GENERATION_PROGRESS = 94
 
 export function countWords(text: string) {
   const normalized = text.trim()
@@ -26,6 +31,40 @@ export function estimateDurationSeconds(text: string) {
   }
 
   return Math.max(1, Math.round((words / WORDS_PER_MINUTE) * 60))
+}
+
+export function estimateRenderSeconds(text: string) {
+  const runtimeSeconds = estimateDurationSeconds(text)
+  if (!runtimeSeconds) {
+    return 0
+  }
+
+  const baselineSeconds = runtimeSeconds / GENERATION_SPEED_RATIO
+
+  return Math.max(
+    MIN_GENERATION_SECONDS,
+    Math.round(baselineSeconds * GENERATION_BUFFER_RATIO + GENERATION_BUFFER_SECONDS),
+  )
+}
+
+export function getRenderProgress(startedAt: number, estimateSeconds: number) {
+  if (!estimateSeconds) {
+    return 0
+  }
+
+  const elapsedSeconds = Math.max(0, (Date.now() - startedAt) / 1000)
+  const progress = Math.round((elapsedSeconds / estimateSeconds) * MAX_GENERATION_PROGRESS)
+
+  return Math.max(6, Math.min(MAX_GENERATION_PROGRESS, progress))
+}
+
+export function getRenderRemainingSeconds(startedAt: number, estimateSeconds: number) {
+  if (!estimateSeconds) {
+    return 0
+  }
+
+  const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000)
+  return Math.max(0, estimateSeconds - elapsedSeconds)
 }
 
 export function formatDuration(totalSeconds: number) {

@@ -22,7 +22,10 @@ import {
   buildPlan,
   countWords,
   estimateDurationSeconds,
+  estimateRenderSeconds,
   formatDuration,
+  getRenderProgress,
+  getRenderRemainingSeconds,
   summarizePlan,
   type PlanItem,
 } from './lib/planner'
@@ -35,10 +38,18 @@ type AudioClip = AudioResult & {
   url: string
 }
 
+type RenderProgress = {
+  estimateSeconds: number
+  progress: number
+  remainingSeconds: number
+  startedAt: number
+}
+
 type PlannedSegment = PlanItem & {
   status: RequestState
   error: string | null
   clip: AudioClip | null
+  renderProgress: RenderProgress | null
 }
 
 const STORAGE_KEY = 'pocket-tts.base-url'
@@ -72,6 +83,7 @@ function buildSegmentState(items: PlanItem[]): PlannedSegment[] {
     status: 'idle',
     error: null,
     clip: null,
+    renderProgress: null,
   }))
 }
 
@@ -89,6 +101,51 @@ function getStatusHeadline(state: HealthState) {
   }
 
   return 'Waiting for API'
+}
+
+function createRenderProgress(text: string): RenderProgress {
+  const estimateSeconds = estimateRenderSeconds(text)
+
+  return {
+    estimateSeconds,
+    progress: estimateSeconds ? 6 : 0,
+    remainingSeconds: estimateSeconds,
+    startedAt: Date.now(),
+  }
+}
+
+function syncRenderProgress(state: RenderProgress) {
+  return {
+    ...state,
+    progress: getRenderProgress(state.startedAt, state.estimateSeconds),
+    remainingSeconds: getRenderRemainingSeconds(state.startedAt, state.estimateSeconds),
+  }
+}
+
+type ProgressMeterProps = {
+  label: string
+  value: RenderProgress
+  compact?: boolean
+}
+
+function ProgressMeter({ label, value, compact = false }: ProgressMeterProps) {
+  return (
+    <div className={`progress-meter ${compact ? 'is-compact' : ''}`} role="status" aria-live="polite">
+      <div className="progress-head">
+        <strong>{label}</strong>
+        <span className="badge mono">{value.progress}%</span>
+      </div>
+
+      <div className="progress-track" aria-hidden="true">
+        <span className="progress-fill" style={{ width: `${value.progress}%` }} />
+      </div>
+
+      <div className="progress-stats">
+        <span>Est. {formatDuration(value.estimateSeconds)}</span>
+        <span>{value.remainingSeconds ? `${formatDuration(value.remainingSeconds)} left` : 'Finishing'}</span>
+      </div>
+    </div>
+  )
 }
 
 function App() {
@@ -118,6 +175,7 @@ function App() {
   const [fullAudioState, setFullAudioState] = useState<RequestState>('idle')
   const [fullAudioError, setFullAudioError] = useState<string | null>(null)
   const [fullAudio, setFullAudio] = useState<AudioClip | null>(null)
+  const [fullRenderProgress, setFullRenderProgress] = useState<RenderProgress | null>(null)
   const [uploadState, setUploadState] = useState<RequestState>('idle')
   const [uploadMessage, setUploadMessage] = useState('Ready for upload')
   const [uploadName, setUploadName] = useState('')
@@ -130,7 +188,11 @@ function App() {
   const voiceOptions = voices.length ? voices : [selectedVoice]
   const scriptWords = countWords(script)
   const scriptDuration = estimateDurationSeconds(script)
+  const renderEstimate = estimateRenderSeconds(script)
   const planSummary = summarizePlan(plan)
+  const hasRunningBeat = plan.some(
+    (item) => item.status === 'running' && item.renderProgress !== null,
+  )
 
   useEffect(() => {
     setBaseUrlDraft(baseUrl)
@@ -208,6 +270,47 @@ function App() {
     void runVoicesRefresh(baseUrl)
   }, [baseUrl])
 
+  useEffect(() => {
+    if (fullAudioState !== 'running' || !fullRenderProgress) {
+      return
+    }
+
+    const timer = window.setInterval(() => {
+      setFullRenderProgress((current) => {
+        if (!current) {
+          return current
+        }
+
+        return syncRenderProgress(current)
+      })
+    }, 250)
+
+    return () => window.clearInterval(timer)
+  }, [fullAudioState, fullRenderProgress?.startedAt])
+
+  useEffect(() => {
+    if (!hasRunningBeat) {
+      return
+    }
+
+    const timer = window.setInterval(() => {
+      setPlan((currentPlan) =>
+        currentPlan.map((item) => {
+          if (item.status !== 'running' || !item.renderProgress) {
+            return item
+          }
+
+          return {
+            ...item,
+            renderProgress: syncRenderProgress(item.renderProgress),
+          }
+        }),
+      )
+    }, 250)
+
+    return () => window.clearInterval(timer)
+  }, [hasRunningBeat])
+
   function trackObjectUrl(url: string) {
     objectUrlsRef.current.push(url)
     return url
@@ -233,6 +336,8 @@ function App() {
       setFullAudioState('idle')
       setFullAudioError(null)
     }
+
+    setFullRenderProgress(null)
 
     setScript(value)
 
@@ -281,6 +386,7 @@ function App() {
           status: 'idle',
           error: null,
           clip: null,
+          renderProgress: null,
         }
       }),
     )
@@ -308,15 +414,18 @@ function App() {
 
     setFullAudioState('running')
     setFullAudioError(null)
+    setFullRenderProgress(createRenderProgress(nextScript))
 
     try {
       const clip = await createAudioClip(nextScript)
       revokeObjectUrl(fullAudio?.url)
       setFullAudio(clip)
       setFullAudioState('done')
+      setFullRenderProgress(null)
     } catch (error) {
       setFullAudioState('error')
       setFullAudioError(getErrorMessage(error))
+      setFullRenderProgress(null)
     }
   }
 
@@ -333,6 +442,7 @@ function App() {
               ...item,
               status: 'running',
               error: null,
+              renderProgress: createRenderProgress(item.text),
             }
           : item,
       ),
@@ -350,6 +460,7 @@ function App() {
                 status: 'done',
                 error: null,
                 clip,
+                renderProgress: null,
               }
             : item,
         ),
@@ -362,6 +473,7 @@ function App() {
                 ...item,
                 status: 'error',
                 error: getErrorMessage(error),
+                renderProgress: null,
               }
             : item,
         ),
@@ -519,6 +631,10 @@ function App() {
 
               <p className="note">{voicesMessage}</p>
 
+              {fullAudioState === 'running' && fullRenderProgress ? (
+                <ProgressMeter label="Rendering full audio" value={fullRenderProgress} />
+              ) : null}
+
               {fullAudioError ? <div className="message is-error">{fullAudioError}</div> : null}
 
               {fullAudio ? (
@@ -557,6 +673,11 @@ function App() {
                   <article className="metric">
                     <span className="metric-label">Runtime</span>
                     <strong className="metric-value">{formatDuration(scriptDuration)}</strong>
+                    <span className="metric-note">
+                      {scriptWords
+                        ? `Render est. ${formatDuration(renderEstimate)}`
+                        : 'Add script to estimate render time'}
+                    </span>
                   </article>
 
                   <article className="metric">
@@ -632,6 +753,14 @@ function App() {
                         handleSegmentTextChange(item.id, event.target.value)
                       }
                     />
+
+                    {item.status === 'running' && item.renderProgress ? (
+                      <ProgressMeter
+                        compact
+                        label={`${item.label} rendering`}
+                        value={item.renderProgress}
+                      />
+                    ) : null}
 
                     {item.error ? <div className="message is-error">{item.error}</div> : null}
 
